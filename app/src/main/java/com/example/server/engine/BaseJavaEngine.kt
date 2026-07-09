@@ -41,13 +41,13 @@ abstract class BaseJavaEngine(val context: Context, val onLog: (String) -> Unit,
         get() = File(serverDir, serverJarName)
         
     val requiredJavaVersion: Int
-        get() = if (serverJarName.contains("powernukkit", ignoreCase = true)) 21 else 17
+        get() = if (serverJarName.contains("powernukkit", ignoreCase = true)) 21 else 21 // Always use Java 21!
 
     val requiredClassVersion: Double
-        get() = if (requiredJavaVersion == 21) 65.0 else 61.0
+        get() = if (serverJarName.contains("powernukkit", ignoreCase = true)) 65.0 else 61.0 // PNX requires 65.0
 
     val jreDir: File
-        get() = File(context.filesDir, "jre$requiredJavaVersion")
+        get() = File(context.filesDir, "jre21")
         
     val javaBin: File
         get() = File(jreDir, "bin/java")
@@ -91,7 +91,7 @@ abstract class BaseJavaEngine(val context: Context, val onLog: (String) -> Unit,
                 withContext(Dispatchers.Main) { onLog("Files missing. Initiating setup...") }
                 if (!jreValid) {
                     withContext(Dispatchers.Main) { onLog("Downloading Java runtime...") }
-                    Downloader.downloadAndExtractJre(jreDir, requiredJavaVersion) { progress ->
+                    Downloader.downloadAndExtractJre(jreDir, 21) { progress ->
                         scope.launch(Dispatchers.Main) { onLog(progress) }
                     }
                 }
