@@ -17,7 +17,8 @@ object Downloader {
     private val client = OkHttpClient()
 
     private const val NUKKIT_URL = "https://github.com/PowerNukkitX/PowerNukkitX/releases/download/2.0.0/powernukkitx.jar"
-    private const val JRE_URL = "https://github.com/MojoLauncher/android-openjdk-build-17-25/releases/download/rolling/jre17-pojav.zip"
+    private const val JRE17_URL = "https://github.com/MojoLauncher/android-openjdk-build-17-25/releases/download/rolling/jre17-pojav.zip"
+    private const val JRE21_URL = "https://github.com/MojoLauncher/android-openjdk-build-17-25/releases/download/rolling/jre21-pojav.zip"
 
 
     suspend fun downloadServerJar(url: String, destination: File, onProgress: (String) -> Unit): Boolean {
@@ -25,7 +26,8 @@ object Downloader {
         return success
     }
 
-    suspend fun downloadAndExtractJre(jreDir: File, onProgress: (String) -> Unit): Boolean {
+    suspend fun downloadAndExtractJre(jreDir: File, version: Int, onProgress: (String) -> Unit): Boolean {
+        val jreUrl = if (version == 17) JRE17_URL else JRE21_URL
         var attempts = 0
         while (attempts < 2) {
             attempts++
@@ -34,9 +36,9 @@ object Downloader {
                 jreDir.deleteRecursively()
             }
             
-            val zipFile = File(jreDir.parentFile, "jre.zip")
-            onProgress("JRE download URL: $JRE_URL")
-            val success = downloadFile(JRE_URL, zipFile, onProgress, "JRE")
+            val zipFile = File(jreDir.parentFile, "jre${version}.zip")
+            onProgress("JRE download URL: $jreUrl")
+            val success = downloadFile(jreUrl, zipFile, onProgress, "JRE")
             
             if (!success) {
                 zipFile.delete()

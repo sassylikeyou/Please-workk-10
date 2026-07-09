@@ -40,8 +40,14 @@ abstract class BaseJavaEngine(val context: Context, val onLog: (String) -> Unit,
     val serverJar: File
         get() = File(serverDir, serverJarName)
         
+    val requiredJavaVersion: Int
+        get() = if (serverJarName.contains("powernukkit", ignoreCase = true)) 21 else 17
+
+    val requiredClassVersion: Double
+        get() = if (requiredJavaVersion == 21) 65.0 else 61.0
+
     val jreDir: File
-        get() = File(context.filesDir, "jre21")
+        get() = File(context.filesDir, "jre$requiredJavaVersion")
         
     val javaBin: File
         get() = File(jreDir, "bin/java")
@@ -85,7 +91,7 @@ abstract class BaseJavaEngine(val context: Context, val onLog: (String) -> Unit,
                 withContext(Dispatchers.Main) { onLog("Files missing. Initiating setup...") }
                 if (!jreValid) {
                     withContext(Dispatchers.Main) { onLog("Downloading Java runtime...") }
-                    Downloader.downloadAndExtractJre(jreDir) { progress ->
+                    Downloader.downloadAndExtractJre(jreDir, requiredJavaVersion) { progress ->
                         scope.launch(Dispatchers.Main) { onLog(progress) }
                     }
                 }
@@ -435,13 +441,16 @@ abstract class BaseJavaEngine(val context: Context, val onLog: (String) -> Unit,
                 var diagFailed = false
                 withContext(Dispatchers.Main) {
                     onLog("--- Server Startup Diagnostics ---")
+                    onLog("Detected class version requirement: $requiredClassVersion")
+                    onLog("Selected Java version: $requiredJavaVersion")
+                    onLog("JAVA_HOME: ${jreDir.absolutePath}")
                     onLog("Java executable path: ${javaBin.absolutePath}")
                     onLog("Java architecture: ${android.os.Build.SUPPORTED_ABIS.joinToString(", ")}")
                     onLog("Server jar path: ${serverJar.absolutePath}")
                     onLog("Server jar size: ${serverJar.length()} bytes")
                     onLog("Working directory: ${serverDir.absolutePath}")
                     onLog("Temporary directory: ${tmpDir.absolutePath}")
-                    onLog("LD_LIBRARY_PATH: ${jreDir.absolutePath}/lib:${jreDir.absolutePath}/lib/jli:${jreDir.absolutePath}/lib/server")
+                    onLog("LD_LIBRARY_PATH: /system/lib64:${jreDir.absolutePath}/lib:${jreDir.absolutePath}/lib/server:${jreDir.absolutePath}/lib/jli")
                     
                     if (!javaBin.exists()) {
                         onLog("ERROR: Java executable not found")
@@ -470,7 +479,7 @@ abstract class BaseJavaEngine(val context: Context, val onLog: (String) -> Unit,
                 envMap["HOME"] = serverDir.absolutePath
                 envMap["TMPDIR"] = tmpDir.absolutePath
                 envMap["DNS_SERVER"] = "automatic"
-                val ldLibPath = "/system/lib64:${jreDir.absolutePath}/lib:${jreDir.absolutePath}/lib/jli:${jreDir.absolutePath}/lib/server"
+                val ldLibPath = "/system/lib64:${jreDir.absolutePath}/lib:${jreDir.absolutePath}/lib/server:${jreDir.absolutePath}/lib/jli"
                 envMap["LD_LIBRARY_PATH"] = ldLibPath
                 envMap["_DISABLE_MTE_CHECKS"] = "1"
                 envMap["MALLOC_CHECK_"] = "0"
