@@ -17,7 +17,7 @@ object Downloader {
     private val client = OkHttpClient()
 
     private const val NUKKIT_URL = "https://github.com/PowerNukkitX/PowerNukkitX/releases/download/2.0.0/powernukkitx.jar"
-    private const val JRE_URL = "https://github.com/MojoLauncher/android-openjdk-build-17-25/releases/download/rolling/jre21-pojav.zip"
+    private const val JRE_URL = "https://github.com/MojoLauncher/android-openjdk-build-17-25/releases/download/rolling/jre17-pojav.zip"
 
 
     suspend fun downloadServerJar(url: String, destination: File, onProgress: (String) -> Unit): Boolean {

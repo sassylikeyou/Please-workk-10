@@ -3,108 +3,53 @@ import re
 with open('app/src/main/java/com/example/server/engine/BaseJavaEngine.kt', 'r', encoding='utf-8') as f:
     content = f.read()
 
-# 1. Remove startDiscoveryProxy function
-content = re.sub(r'    private fun startDiscoveryProxy\(\) \{.*?\n    \}\n', '', content, flags=re.DOTALL)
+# 1. Modify LD_LIBRARY_PATH and add env vars
+old_env = """                val ldLibPath = "${jreDir.absolutePath}/lib:${jreDir.absolutePath}/lib/jli:${jreDir.absolutePath}/lib/server"
+                envMap["LD_LIBRARY_PATH"] = ldLibPath
+                envMap["MALLOC_NANO_ZONE"] = "0" """
 
-# 2. Start Foreground Service in startServer
-start_svc = """        scope.launch {
-            withContext(Dispatchers.Main) { onStatusChange(ServerStatus.STARTING) }
-            // Start Foreground Service
-            val serviceIntent = android.content.Intent(context, com.example.server.ServerForegroundService::class.java)
-            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
-                context.startForegroundService(serviceIntent)
-            } else {
-                context.startService(serviceIntent)
-            }"""
-content = content.replace("        scope.launch {\n            withContext(Dispatchers.Main) { onStatusChange(ServerStatus.STARTING) }", start_svc)
+new_env = """                val ldLibPath = "/system/lib64:${jreDir.absolutePath}/lib:${jreDir.absolutePath}/lib/jli:${jreDir.absolutePath}/lib/server"
+                envMap["LD_LIBRARY_PATH"] = ldLibPath
+                envMap["_DISABLE_MTE_CHECKS"] = "1"
+                envMap["MALLOC_CHECK_"] = "0"
+                envMap["MALLOC_NANO_ZONE"] = "0" """
 
-# 3. Stop Foreground Service in stopServer
-stop_svc = """    override fun stopServer() {
-        val serviceIntent = android.content.Intent(context, com.example.server.ServerForegroundService::class.java)
-        serviceIntent.action = "STOP"
-        context.startService(serviceIntent)"""
-content = content.replace("    override fun stopServer() {", stop_svc)
+content = content.replace(old_env, new_env)
+if "_DISABLE_MTE_CHECKS" not in content:
+    print("Failed to replace env!")
 
-# 4. Modify Launch Arguments
-content = content.replace('argsList.add("-Xint")', '')
-content = content.replace('argsList.add("-Xms256M")', 'argsList.add("-Xms512M")')
-content = content.replace('argsList.add("-Xmx1024M")', 'argsList.add("-Xmx1536M")')
+# 2. Modify argsList
+old_args = """                // Disable memory mapping for zips which can cause issues on some architectures
+                argsList.add("-Dsun.zip.disableMemoryMapping=true")
+                argsList.add("-Djna.nosys=true")
+                argsList.add("-Dorg.jline.terminal.dumb=true")
+                argsList.add("-Djline.terminal=jline.UnsupportedTerminal")
+                
+                argsList.add("-Xms512M")
+                
+                argsList.add("-Xmx1536M")"""
 
-# 5. Fix InputStreamReader logic (Remove Main dispatcher inside tight loop)
-old_reader = """                val logJob2 = scope.launch(Dispatchers.IO) {
-                    try {
-                        pReader.forEachLine { line ->
-                            scope.launch(Dispatchers.Main) { 
-                                onLog(line)
-                                healthMonitor.analyzeLogLine(line)
-                                if (line.contains("Listening on ")) {
-                                    Log.i("ServerManager", "[DEBUG] Current server bind address and Port: $line")
-                                }
-                                if (line.contains("UDP socket") || line.contains("RakNet")) {
-                                    Log.i("ServerManager", "[DEBUG] UDP socket opened successfully: $line")
-                                }
-                                if (line.contains("UnknownHostException: authorization.franchise.minecraft-services.net") || line.contains("InvalidJwtException")) {
-                                    onLog("Xbox authentication service unavailable.")
-                                    onLog("Player authentication failed.")
-                                }
-                                if (line.contains("logged in with entity id") || line.contains("Player connected") || line.contains("Player authenticated:")) {
-                                    onLog("Xbox authentication state: VERIFIED")
-                                }
-                                if (line.contains("Enter a language code from the list below")) {
-                                    Log.i("ServerManager", "[JRE] First run detected")
-                                    onLog("[JRE] Applying default language: eng")
-                                    process?.outputStream?.write("eng\\n".toByteArray())
-                                    process?.outputStream?.flush()
-                                }
-                                if (line.contains("You MUST accept this license to continue") || line.contains("Do you accept the license")) {
-                                    Log.i("ServerManager", "[JRE] Auto-accepting license")
-                                    onLog("[JRE] Auto-accepting license")
-                                    process?.outputStream?.write("yes\\n".toByteArray())
-                                    process?.outputStream?.flush()
-                                }
-                            }
-                        }
-                    } catch (e: Exception) {}
-                }"""
+new_args = """                argsList.add("-Dorg.jline.terminal.dumb=true")
+                argsList.add("-Djline.terminal=jline.UnsupportedTerminal")
+                
+                argsList.add("-Xms768M")
+                
+                argsList.add("-Xmx2048M")"""
 
-new_reader = """                val logJob2 = scope.launch(Dispatchers.IO) {
-                    try {
-                        pReader.forEachLine { line ->
-                            withContext(Dispatchers.Main) { 
-                                onLog(line)
-                                healthMonitor.analyzeLogLine(line)
-                            }
-                            if (line.contains("Listening on ")) {
-                                Log.i("ServerManager", "[DEBUG] Current server bind address and Port: $line")
-                            }
-                            if (line.contains("UDP socket") || line.contains("RakNet")) {
-                                Log.i("ServerManager", "[DEBUG] UDP socket opened successfully: $line")
-                            }
-                            if (line.contains("UnknownHostException: authorization.franchise.minecraft-services.net") || line.contains("InvalidJwtException")) {
-                                withContext(Dispatchers.Main) {
-                                    onLog("Xbox authentication service unavailable.")
-                                    onLog("Player authentication failed.")
-                                }
-                            }
-                            if (line.contains("logged in with entity id") || line.contains("Player connected") || line.contains("Player authenticated:")) {
-                                withContext(Dispatchers.Main) { onLog("Xbox authentication state: VERIFIED") }
-                            }
-                            if (line.contains("Enter a language code from the list below")) {
-                                Log.i("ServerManager", "[JRE] First run detected")
-                                withContext(Dispatchers.Main) { onLog("[JRE] Applying default language: eng") }
-                                process?.outputStream?.write("eng\\n".toByteArray())
-                                process?.outputStream?.flush()
-                            }
-                            if (line.contains("You MUST accept this license to continue") || line.contains("Do you accept the license")) {
-                                Log.i("ServerManager", "[JRE] Auto-accepting license")
-                                withContext(Dispatchers.Main) { onLog("[JRE] Auto-accepting license") }
-                                process?.outputStream?.write("yes\\n".toByteArray())
-                                process?.outputStream?.flush()
-                            }
-                        }
-                    } catch (e: Exception) {}
-                }"""
-content = content.replace(old_reader, new_reader)
+content = content.replace(old_args, new_args)
+if "768M" not in content:
+    print("Failed to replace args!")
+
+# 3. Add Java version diagnostics for 17
+old_diag = """                        if (!versionOutput.contains("\\"21") && !versionOutput.contains("\\"22") && !versionOutput.contains("\\"23")) {
+                            onLog("ERROR: Java version is not 21+. Aborting.")"""
+
+new_diag = """                        if (!versionOutput.contains("\\"17") && !versionOutput.contains("\\"21") && !versionOutput.contains("\\"22") && !versionOutput.contains("\\"23")) {
+                            onLog("ERROR: Java version is not 17+. Aborting.")"""
+
+content = content.replace(old_diag, new_diag)
+if "17+" not in content:
+    print("Failed to replace diag!")
 
 with open('app/src/main/java/com/example/server/engine/BaseJavaEngine.kt', 'w', encoding='utf-8') as f:
     f.write(content)

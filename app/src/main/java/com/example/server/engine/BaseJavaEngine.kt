@@ -385,15 +385,12 @@ abstract class BaseJavaEngine(val context: Context, val onLog: (String) -> Unit,
                 argsList.add("-Dhttps.protocols=TLSv1.2,TLSv1.3")
                 argsList.add("-Dfile.encoding=UTF-8")
                 
-                // Disable memory mapping for zips which can cause issues on some architectures
-                argsList.add("-Dsun.zip.disableMemoryMapping=true")
-                argsList.add("-Djna.nosys=true")
                 argsList.add("-Dorg.jline.terminal.dumb=true")
                 argsList.add("-Djline.terminal=jline.UnsupportedTerminal")
                 
-                argsList.add("-Xms512M")
+                argsList.add("-Xms768M")
                 
-                argsList.add("-Xmx1536M")
+                argsList.add("-Xmx2048M")
                 
                 // DNS resolution moved to NetworkDiagnosticsManager
                 
@@ -473,8 +470,10 @@ abstract class BaseJavaEngine(val context: Context, val onLog: (String) -> Unit,
                 envMap["HOME"] = serverDir.absolutePath
                 envMap["TMPDIR"] = tmpDir.absolutePath
                 envMap["DNS_SERVER"] = "automatic"
-                val ldLibPath = "${jreDir.absolutePath}/lib:${jreDir.absolutePath}/lib/jli:${jreDir.absolutePath}/lib/server"
+                val ldLibPath = "/system/lib64:${jreDir.absolutePath}/lib:${jreDir.absolutePath}/lib/jli:${jreDir.absolutePath}/lib/server"
                 envMap["LD_LIBRARY_PATH"] = ldLibPath
+                envMap["_DISABLE_MTE_CHECKS"] = "1"
+                envMap["MALLOC_CHECK_"] = "0"
                 envMap["MALLOC_NANO_ZONE"] = "0" 
                 
                 try {
@@ -506,8 +505,8 @@ abstract class BaseJavaEngine(val context: Context, val onLog: (String) -> Unit,
                             onStatusChange(com.example.server.ServerStatus.ERROR)
                             diagFailed = true
                         }
-                        if (!versionOutput.contains("\"21") && !versionOutput.contains("\"22") && !versionOutput.contains("\"23")) {
-                            onLog("ERROR: Java version is not 21+. Aborting.")
+                        if (!versionOutput.contains("\"17") && !versionOutput.contains("\"21") && !versionOutput.contains("\"22") && !versionOutput.contains("\"23")) {
+                            onLog("ERROR: Java version is not 17+. Aborting.")
                             onStatusChange(com.example.server.ServerStatus.ERROR)
                             diagFailed = true
                         }
@@ -530,7 +529,7 @@ abstract class BaseJavaEngine(val context: Context, val onLog: (String) -> Unit,
                 pb.environment().remove("https_proxy")
                 pb.environment().remove("HTTP_PROXY")
                 pb.environment().remove("HTTPS_PROXY")
-                pb.redirectErrorStream(true)
+                pb.redirectErrorStream(false)
                 
                 withContext(Dispatchers.Main) {
                     onLog("Executable:\n${args[0]}")
@@ -543,10 +542,17 @@ abstract class BaseJavaEngine(val context: Context, val onLog: (String) -> Unit,
                 
                 
                 
+                val stdoutBuffer = java.util.concurrent.ConcurrentLinkedQueue<String>()
+                val stderrBuffer = java.util.concurrent.ConcurrentLinkedQueue<String>()
+
                 val pReader = java.io.BufferedReader(java.io.InputStreamReader(process!!.inputStream, Charsets.UTF_8))
+                val pErrorReader = java.io.BufferedReader(java.io.InputStreamReader(process!!.errorStream, Charsets.UTF_8))
+                
                 val logJob2 = scope.launch(Dispatchers.IO) {
                     try {
                         pReader.forEachLine { line ->
+                            stdoutBuffer.offer(line)
+                            if (stdoutBuffer.size > 200) stdoutBuffer.poll()
                             scope.launch(Dispatchers.Main) { 
                                 onLog(line)
                                 healthMonitor.analyzeLogLine(line)
@@ -581,13 +587,42 @@ abstract class BaseJavaEngine(val context: Context, val onLog: (String) -> Unit,
                         }
                     } catch (e: Exception) {}
                 }
-                
+
+                val logJob3 = scope.launch(Dispatchers.IO) {
+                    try {
+                        pErrorReader.forEachLine { line ->
+                            stderrBuffer.offer(line)
+                            if (stderrBuffer.size > 200) stderrBuffer.poll()
+                            scope.launch(Dispatchers.Main) { 
+                                onLog("[STDERR] $line")
+                            }
+                        }
+                    } catch (e: Exception) {}
+                }
                 
                 val exitCode = process!!.waitFor()
                 logJob2.cancel()
+                logJob3.cancel()
                 
                 withContext(Dispatchers.Main) {
                     onLog("Server process exited with code $exitCode")
+                    
+                    if (exitCode != 0) {
+                        onLog("--- CRASH DIAGNOSTICS ---")
+                        val signal = if (exitCode > 128) exitCode - 128 else null
+                        onLog("Exit code: $exitCode")
+                        if (signal != null) {
+                            onLog("Signal causing termination: $signal")
+                            if (signal == 6) onLog("Signal details: SIGABRT")
+                            if (signal == 9) onLog("Signal details: SIGKILL")
+                            if (signal == 11) onLog("Signal details: SIGSEGV")
+                        }
+                        onLog("--- STDOUT (last 50 lines) ---")
+                        stdoutBuffer.toList().takeLast(50).forEach { onLog(it) }
+                        onLog("--- STDERR (last 50 lines) ---")
+                        stderrBuffer.toList().takeLast(50).forEach { onLog(it) }
+                        onLog("-------------------------")
+                    }
                     
                     val crashLogs = serverDir.listFiles { _, name -> name.startsWith("hs_err_pid") && name.endsWith(".log") }
                     crashLogs?.forEach { crashLog ->
