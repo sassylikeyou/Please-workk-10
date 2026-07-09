@@ -17,8 +17,8 @@ object Downloader {
     private val client = OkHttpClient()
 
     private const val NUKKIT_URL = "https://github.com/PowerNukkitX/PowerNukkitX/releases/download/2.0.0/powernukkitx.jar"
-    private const val JRE17_URL = "https://github.com/MojoLauncher/android-openjdk-build-17-25/releases/download/rolling/jre17-pojav.zip"
-    private const val JRE21_URL = "https://github.com/MojoLauncher/android-openjdk-build-17-25/releases/download/rolling/jre21-pojav.zip"
+    
+    private const val JRE21_URL = "https://github.com/awoot6549/android-openjdk-build-multiarch/releases/download/rolling/jre21-pojav.zip"
 
 
     suspend fun downloadServerJar(url: String, destination: File, onProgress: (String) -> Unit): Boolean {
@@ -27,7 +27,7 @@ object Downloader {
     }
 
     suspend fun downloadAndExtractJre(jreDir: File, version: Int, onProgress: (String) -> Unit): Boolean {
-        val jreUrl = if (version == 17) JRE17_URL else JRE21_URL
+        val jreUrl = JRE21_URL
         var attempts = 0
         while (attempts < 2) {
             attempts++
@@ -80,6 +80,12 @@ object Downloader {
                     onProgress("Extracting ARM64 binaries...")
                     extractTarXz(binTar, jreDir, onProgress)
                     binTar.delete()
+                    
+                    onProgress("Removing desktop UI libraries...")
+                    val libDirForCleanup = File(jreDir, "lib")
+                    File(libDirForCleanup, "libawt.so").delete()
+                    File(libDirForCleanup, "libawt_headless.so").delete()
+                    File(libDirForCleanup, "libfontmanager.so").delete()
 
                     // Promotion step: If the tarballs extracted into a subfolder (e.g., "jre/"), move everything up.
                     onProgress("Checking JRE structure...")

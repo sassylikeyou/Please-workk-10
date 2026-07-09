@@ -394,9 +394,11 @@ abstract class BaseJavaEngine(val context: Context, val onLog: (String) -> Unit,
                 argsList.add("-Dorg.jline.terminal.dumb=true")
                 argsList.add("-Djline.terminal=jline.UnsupportedTerminal")
                 
-                argsList.add("-Xms768M")
-                
-                argsList.add("-Xmx2048M")
+                argsList.add("-Xms512M")
+                argsList.add("-Xmx1536M")
+                argsList.add("-XX:+UseSerialGC")
+                argsList.add("-XX:-UseCompressedOops")
+                argsList.add("-Djava.awt.headless=true")
                 
                 // DNS resolution moved to NetworkDiagnosticsManager
                 
@@ -486,6 +488,23 @@ abstract class BaseJavaEngine(val context: Context, val onLog: (String) -> Unit,
                 envMap["MALLOC_NANO_ZONE"] = "0" 
                 
                 try {
+                    val diagPbX = ProcessBuilder(javaBin.absolutePath, "-XshowSettings:vm", "-version")
+                    diagPbX.directory(serverDir)
+                    diagPbX.environment().putAll(envMap)
+                    diagPbX.environment().remove("JAVA_TOOL_OPTIONS")
+                    diagPbX.environment().remove("_JAVA_OPTIONS")
+                    val pDiagX = diagPbX.start()
+                    val readerDiagX = java.io.BufferedReader(java.io.InputStreamReader(pDiagX.inputStream))
+                    val errorDiagX = java.io.BufferedReader(java.io.InputStreamReader(pDiagX.errorStream))
+                    var lineDiagX: String?
+                    while (readerDiagX.readLine().also { lineDiagX = it } != null) {
+                        withContext(Dispatchers.Main) { onLog("java settings stdout: $lineDiagX") }
+                    }
+                    while (errorDiagX.readLine().also { lineDiagX = it } != null) {
+                        withContext(Dispatchers.Main) { onLog("java settings stderr: $lineDiagX") }
+                    }
+                    pDiagX.waitFor()
+
                     val diagPb = ProcessBuilder(javaBin.absolutePath, "-version")
                     diagPb.directory(serverDir)
                     // // diagPb.environment().clear()
@@ -514,8 +533,8 @@ abstract class BaseJavaEngine(val context: Context, val onLog: (String) -> Unit,
                             onStatusChange(com.example.server.ServerStatus.ERROR)
                             diagFailed = true
                         }
-                        if (!versionOutput.contains("\"17") && !versionOutput.contains("\"21") && !versionOutput.contains("\"22") && !versionOutput.contains("\"23")) {
-                            onLog("ERROR: Java version is not 17+. Aborting.")
+                        if (!versionOutput.contains("\"21") && !versionOutput.contains("\"22") && !versionOutput.contains("\"23")) {
+                            onLog("ERROR: Java version is not 21+. Aborting.")
                             onStatusChange(com.example.server.ServerStatus.ERROR)
                             diagFailed = true
                         }
