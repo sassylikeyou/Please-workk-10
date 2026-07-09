@@ -503,10 +503,6 @@ abstract class BaseJavaEngine(val context: Context, val onLog: (String) -> Unit,
                 argsList.add("-Djava.net.preferIPv4Addresses=true")
                 argsList.add("-Dhttps.protocols=TLSv1.2,TLSv1.3")
                 argsList.add("-Djdk.net.hosts.file=${File(serverDir, "custom_hosts.txt").absolutePath}")
-                argsList.add("-Dhttps.proxyHost=127.0.0.1")
-                argsList.add("-Dhttps.proxyPort=19133")
-                argsList.add("-Dhttp.proxyHost=127.0.0.1")
-                argsList.add("-Dhttp.proxyPort=19133")
                 argsList.add("-Dfile.encoding=UTF-8")
                 
                 // Disable memory mapping for zips which can cause issues on some architectures
@@ -521,8 +517,11 @@ abstract class BaseJavaEngine(val context: Context, val onLog: (String) -> Unit,
                 
                 // DNS resolution moved to NetworkDiagnosticsManager
                 
-                val trustStoreFile = java.io.File(serverDir, "truststore.p12")
-                if (!trustStoreFile.exists()) {
+                val cacertsFile = java.io.File(jreDir, "lib/security/cacerts")
+                val securityDir = java.io.File(jreDir, "lib/security")
+                if (!securityDir.exists()) securityDir.mkdirs()
+                
+                if (!cacertsFile.exists() || cacertsFile.length() < 1000) {
                     try {
                         val keyStore = java.security.KeyStore.getInstance("AndroidCAStore")
                         keyStore.load(null, null)
@@ -537,16 +536,14 @@ abstract class BaseJavaEngine(val context: Context, val onLog: (String) -> Unit,
                             p12.setCertificateEntry(alias, cert)
                         }
                         
-                        java.io.FileOutputStream(trustStoreFile).use { fos ->
+                        java.io.FileOutputStream(cacertsFile).use { fos ->
                             p12.store(fos, "changeit".toCharArray())
                         }
+                        withContext(Dispatchers.Main) { onLog("Installed Android system CA certificates into JRE cacerts.") }
                     } catch (e: Exception) {
-                        onLog("Failed to create truststore: ${e.message}")
+                        withContext(Dispatchers.Main) { onLog("Failed to create cacerts: ${e.message}") }
                     }
                 }
-                argsList.add("-Djavax.net.ssl.trustStore=${trustStoreFile.absolutePath}")
-                argsList.add("-Djavax.net.ssl.trustStorePassword=changeit")
-                argsList.add("-Djavax.net.ssl.trustStoreType=PKCS12")
                 
                 argsList.add("-jar")
                 argsList.add(serverJar.absolutePath)

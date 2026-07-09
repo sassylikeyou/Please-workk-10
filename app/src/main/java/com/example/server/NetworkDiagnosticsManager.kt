@@ -11,12 +11,34 @@ import java.net.HttpURLConnection
 import java.net.InetAddress
 import java.net.URL
 import java.util.concurrent.ConcurrentHashMap
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.Dns
+import java.util.concurrent.TimeUnit
+import javax.net.ssl.SSLHandshakeException
+import javax.net.ssl.SSLPeerUnverifiedException
 
 object NetworkDiagnosticsManager {
 
     private const val TAG = "NetworkDiag"
     
     val resolvedIps = ConcurrentHashMap<String, String>()
+
+    private val okHttpClient: OkHttpClient by lazy {
+        OkHttpClient.Builder()
+            .dns(object : Dns {
+                override fun lookup(hostname: String): List<InetAddress> {
+                    val ipStr = resolvedIps[hostname]
+                    if (ipStr != null) {
+                        return listOf(InetAddress.getByName(ipStr))
+                    }
+                    return Dns.SYSTEM.lookup(hostname)
+                }
+            })
+            .connectTimeout(5, TimeUnit.SECONDS)
+            .readTimeout(5, TimeUnit.SECONDS)
+            .build()
+    }
 
     suspend fun runDiagnostics(context: Context, serverDir: File, onLog: (String) -> Unit): Boolean = withContext(Dispatchers.IO) {
         withContext(Dispatchers.Main) { onLog("NETWORK TEST:") }
@@ -57,7 +79,7 @@ object NetworkDiagnosticsManager {
 
         // 3. HTTPS Minecraft discovery
         val discoveryUrl = "https://client.discovery.minecraft-services.net/api/v1.0/discovery/MinecraftPE/builds/1.0.0.0"
-        val discoveryPass = checkHttps(discoveryUrl, ipDiscovery, domainDiscovery)
+        val discoveryPass = checkHttps(discoveryUrl, ipDiscovery, domainDiscovery, onLog)
         if (discoveryPass) {
             withContext(Dispatchers.Main) { onLog("HTTPS Minecraft discovery: PASS") }
         } else {
@@ -67,7 +89,7 @@ object NetworkDiagnosticsManager {
 
         // 4. Xbox JWKS
         val authUrl = "https://authorization.franchise.minecraft-services.net/.well-known/keys"
-        val authPass = checkHttps(authUrl, ipAuth, domainAuth)
+        val authPass = checkHttps(authUrl, ipAuth, domainAuth, onLog)
         if (authPass) {
             withContext(Dispatchers.Main) { onLog("Xbox JWKS: PASS") }
         } else {
@@ -127,19 +149,41 @@ object NetworkDiagnosticsManager {
         return null
     }
 
-    private fun checkHttps(urlStr: String, ip: String, host: String): Boolean {
+    private suspend fun checkHttps(urlStr: String, ip: String, host: String, onLog: (String) -> Unit): Boolean = withContext(Dispatchers.IO) {
         try {
-            val fixedUrl = urlStr.replace(host, ip)
-            val url = URL(fixedUrl)
-            val conn = url.openConnection() as HttpURLConnection
-            conn.setRequestProperty("Host", host)
-            conn.connectTimeout = 5000
-            conn.readTimeout = 5000
-            val code = conn.responseCode
-            return code in 200..299
+            val request = Request.Builder()
+                .url(urlStr)
+                .build()
+            
+            val response = okHttpClient.newCall(request).execute()
+            
+            val handshake = response.handshake
+            withContext(Dispatchers.Main) {
+                onLog("TLS Handshake successful for $host")
+                if (handshake != null) {
+                    onLog("- TLS Protocol: ${handshake.tlsVersion.javaName}")
+                    onLog("- Cipher Suite: ${handshake.cipherSuite.javaName}")
+                    val certs = handshake.peerCertificates
+                    if (certs.isNotEmpty()) {
+                        val cert = certs[0] as java.security.cert.X509Certificate
+                        onLog("- Certificate Subject: ${cert.subjectDN.name}")
+                        onLog("- Certificate Issuer: ${cert.issuerDN.name}")
+                    }
+                }
+                onLog("- Hostname verification: PASS")
+                onLog("- HTTP Response Code: ${response.code}")
+            }
+            
+            return@withContext response.isSuccessful
+        } catch (e: SSLHandshakeException) {
+            withContext(Dispatchers.Main) { onLog("SSL Handshake exception for $urlStr: ${e.message}") }
+            return@withContext false
+        } catch (e: SSLPeerUnverifiedException) {
+            withContext(Dispatchers.Main) { onLog("Hostname verification failed for $urlStr: ${e.message}") }
+            return@withContext false
         } catch (e: Exception) {
-            Log.e(TAG, "HTTPS check failed for $urlStr: ${e.message}")
-            return false
+            withContext(Dispatchers.Main) { onLog("HTTPS check failed for $urlStr: ${e.message}") }
+            return@withContext false
         }
     }
 
