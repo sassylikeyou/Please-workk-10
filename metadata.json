@@ -1,0 +1,6 @@
+{
+  "name": "BedrockBox",
+  "description": "Locally host a Minecraft Bedrock server natively on Android without emulation.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
