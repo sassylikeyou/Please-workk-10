@@ -74,8 +74,7 @@ object NetworkDiagnosticsManager {
             return@withContext false
         }
 
-        // Generate custom_hosts.txt
-        generateHostsFile(serverDir, domainDiscovery, ipDiscovery, domainAuth, ipAuth)
+
 
         // 3. HTTPS Minecraft discovery
         val discoveryUrl = "https://client.discovery.minecraft-services.net/api/v1.0/discovery/MinecraftPE/builds/1.0.0.0"
@@ -187,8 +186,5 @@ object NetworkDiagnosticsManager {
         }
     }
 
-    private fun generateHostsFile(serverDir: File, domain1: String, ip1: String, domain2: String, ip2: String) {
-        val hostsFile = File(serverDir, "custom_hosts.txt")
-        hostsFile.writeText("$ip1 $domain1\n$ip2 $domain2\n")
-    }
+
 }

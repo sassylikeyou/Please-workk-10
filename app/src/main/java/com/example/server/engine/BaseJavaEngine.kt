@@ -30,135 +30,9 @@ abstract class BaseJavaEngine(val context: Context, val onLog: (String) -> Unit,
 
     private var process: Process? = null
     private var logJob: Job? = null
-    private var proxyJob: Job? = null
     private val scope = CoroutineScope(Dispatchers.IO)
     private val healthMonitor = ServerHealthMonitor(onLog, onStatusChange)
 
-    private fun startDiscoveryProxy() {
-        if (proxyJob?.isActive == true) return
-        proxyJob = scope.launch(Dispatchers.IO) {
-            try {
-                val serverSocket = java.net.ServerSocket(19133, 0, java.net.InetAddress.getByName("127.0.0.1"))
-                Log.i("ServerManager", "Local discovery proxy started on 19133")
-                while (true) {
-                    val client = serverSocket.accept()
-                    launch(Dispatchers.IO) {
-                        try {
-                            val reader = java.io.BufferedReader(java.io.InputStreamReader(client.inputStream))
-                            val requestLine = reader.readLine()
-                            if (requestLine != null && requestLine.startsWith("GET")) {
-                                val parts = requestLine.split(" ")
-                                val requestUrl = if (parts.size > 1) parts[1] else "/"
-                                
-                                val targetUrlStr = if (requestUrl.startsWith("http")) requestUrl else "https://client.discovery.minecraft-services.net\$requestUrl"
-                                val safeName = requestUrl.replace("/", "_").replace("?", "_").replace(":", "_")
-                                val cacheFileName = "discovery_cache_" + safeName + ".json"
-                                val cacheFile = File(serverDir, cacheFileName)
-                                var responseBody = ""
-                                var success = false
-                                
-                                while (true) {
-                                    val headerLine = reader.readLine()
-                                    if (headerLine.isNullOrEmpty()) break
-                                }
-                                
-                                var attempts = 0
-                                while (attempts < 3 && !success) {
-                                    attempts++
-                                    try {
-                                        val url = java.net.URL(targetUrlStr)
-                                        val conn = url.openConnection() as java.net.HttpURLConnection
-                                        conn.requestMethod = "GET"
-                                        conn.connectTimeout = 5000
-                                        conn.readTimeout = 5000
-                                        if (conn.responseCode == 200) {
-                                            responseBody = conn.inputStream.bufferedReader().use { it.readText() }
-                                            cacheFile.writeText(responseBody)
-                                            success = true
-                                        }
-                                    } catch (e: Exception) {
-                                        Log.e("ServerManager", "Failed to fetch discovery (Attempt \$attempts/3): \${e.message}")
-                                        if (attempts < 3) kotlinx.coroutines.delay(1000)
-                                    }
-                                }
-                                
-                                if (!success && cacheFile.exists()) {
-                                    responseBody = cacheFile.readText()
-                                    success = true
-                                    Log.i("ServerManager", "Used cached discovery data")
-                                }
-                                
-                                if (!success) {
-                                    if (requestUrl.contains("/builds/1.0.0.0")) {
-                                        responseBody = "{\"TenantId\":\"placeholder\",\"SigningKeys\":[],\"SpringboardUrl\":\"https://client.discovery.minecraft-services.net/v1/springboard\",\"MinecraftServicesUrl\":\"https://client.discovery.minecraft-services.net\",\"MinecraftServicesDiscoveryUrl\":\"https://client.discovery.minecraft-services.net\"}"
-                                        success = true
-                                    } else if (requestUrl.contains("/springboard")) {
-                                        responseBody = "{\"issuer\":\"placeholder\",\"jwks_uri\":\"https://client.discovery.minecraft-services.net/jwks\"}"
-                                        success = true
-                                    } else if (requestUrl.contains("/jwks")) {
-                                        responseBody = "{\"keys\":[]}"
-                                        success = true
-                                    }
-                                }
-                                
-                                val writer = java.io.BufferedWriter(java.io.OutputStreamWriter(client.outputStream))
-                                if (success) {
-                                    val bytes = responseBody.toByteArray(Charsets.UTF_8)
-                                    writer.write("HTTP/1.1 200 OK\r\n")
-                                    writer.write("Content-Type: application/json\r\n")
-                                    writer.write("Content-Length: \${bytes.size}\r\n")
-                                    writer.write("Connection: close\r\n\r\n")
-                                    writer.flush()
-                                    client.outputStream.write(bytes)
-                                } else {
-                                    writer.write("HTTP/1.1 500 Internal Server Error\r\n\r\n")
-                                }
-                                writer.flush()
-                            } else if (requestLine != null && requestLine.startsWith("CONNECT")) {
-                                val writer = java.io.BufferedWriter(java.io.OutputStreamWriter(client.outputStream))
-                                val parts = requestLine.split(" ")
-                                val hostPort = parts[1]
-                                val host = hostPort.substringBefore(":")
-                                val portStr = hostPort.substringAfter(":", "443")
-                                val port = portStr.toIntOrNull() ?: 443
-                                
-                                while (true) {
-                                    val headerLine = reader.readLine()
-                                    if (headerLine.isNullOrEmpty()) break
-                                }
-                                
-                                try {
-                                    val resolvedIp = com.example.server.NetworkDiagnosticsManager.getIp(host)
-                                    val remoteSocket = java.net.Socket(resolvedIp, port)
-                                    writer.write("HTTP/1.1 200 Connection established\r\n\r\n")
-                                    writer.flush()
-                                    
-                                    val clientIn = client.inputStream
-                                    val clientOut = client.outputStream
-                                    val remoteIn = remoteSocket.inputStream
-                                    val remoteOut = remoteSocket.outputStream
-                                    
-                                    val job1 = launch(Dispatchers.IO) { try { clientIn.copyTo(remoteOut) } catch(e: Exception) {} }
-                                    val job2 = launch(Dispatchers.IO) { try { remoteIn.copyTo(clientOut) } catch(e: Exception) {} }
-                                    job1.join()
-                                    job2.join()
-                                    remoteSocket.close()
-                                } catch (e: Exception) {
-                                    writer.write("HTTP/1.1 502 Bad Gateway\r\n\r\n")
-                                    writer.flush()
-                                }
-                            }
-                            client.close()
-                        } catch (e: Exception) {
-                            try { client.close() } catch (e: Exception) {}
-                        }
-                    }
-                }
-            } catch (e: Exception) {
-                e.printStackTrace()
-            }
-        }
-    }
 
     val serverDir: File
         get() = File(context.filesDir, "minecraft/engines/$serverFolderName").apply { mkdirs() }
@@ -194,6 +68,13 @@ abstract class BaseJavaEngine(val context: Context, val onLog: (String) -> Unit,
 
         scope.launch {
             withContext(Dispatchers.Main) { onStatusChange(ServerStatus.STARTING) }
+            // Start Foreground Service
+            val serviceIntent = android.content.Intent(context, com.example.server.ServerForegroundService::class.java)
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                context.startForegroundService(serviceIntent)
+            } else {
+                context.startService(serviceIntent)
+            }
 
             // Download Phase (if needed)
             val libjli = java.io.File(jreDir, "lib/libjli.so")
@@ -380,7 +261,7 @@ abstract class BaseJavaEngine(val context: Context, val onLog: (String) -> Unit,
                 }
                 return@launch
             }
-            startDiscoveryProxy()
+            
             withContext(Dispatchers.Main) {
                 launchServerProcess(memoryMb)
             }
@@ -495,14 +376,13 @@ abstract class BaseJavaEngine(val context: Context, val onLog: (String) -> Unit,
                 val argsList = mutableListOf<String>()
                 argsList.add(javaBin.absolutePath)
                 
-                argsList.add("-Xint")
+                
                 
                 argsList.add("-Djava.io.tmpdir=${tmpDir.absolutePath}")
                 argsList.add("-Duser.dir=${serverDir.absolutePath}")
                 argsList.add("-Djava.net.preferIPv4Stack=true")
                 argsList.add("-Djava.net.preferIPv4Addresses=true")
                 argsList.add("-Dhttps.protocols=TLSv1.2,TLSv1.3")
-                argsList.add("-Djdk.net.hosts.file=${File(serverDir, "custom_hosts.txt").absolutePath}")
                 argsList.add("-Dfile.encoding=UTF-8")
                 
                 // Disable memory mapping for zips which can cause issues on some architectures
@@ -511,9 +391,9 @@ abstract class BaseJavaEngine(val context: Context, val onLog: (String) -> Unit,
                 argsList.add("-Dorg.jline.terminal.dumb=true")
                 argsList.add("-Djline.terminal=jline.UnsupportedTerminal")
                 
-                argsList.add("-Xms256M")
+                argsList.add("-Xms512M")
                 
-                argsList.add("-Xmx1024M")
+                argsList.add("-Xmx1536M")
                 
                 // DNS resolution moved to NetworkDiagnosticsManager
                 
@@ -670,31 +550,33 @@ abstract class BaseJavaEngine(val context: Context, val onLog: (String) -> Unit,
                             scope.launch(Dispatchers.Main) { 
                                 onLog(line)
                                 healthMonitor.analyzeLogLine(line)
-                                if (line.contains("Listening on ")) {
-                                    Log.i("ServerManager", "[DEBUG] Current server bind address and Port: $line")
-                                }
-                                if (line.contains("UDP socket") || line.contains("RakNet")) {
-                                    Log.i("ServerManager", "[DEBUG] UDP socket opened successfully: $line")
-                                }
-                                if (line.contains("UnknownHostException: authorization.franchise.minecraft-services.net") || line.contains("InvalidJwtException")) {
+                            }
+                            if (line.contains("Listening on ")) {
+                                Log.i("ServerManager", "[DEBUG] Current server bind address and Port: $line")
+                            }
+                            if (line.contains("UDP socket") || line.contains("RakNet")) {
+                                Log.i("ServerManager", "[DEBUG] UDP socket opened successfully: $line")
+                            }
+                            if (line.contains("UnknownHostException: authorization.franchise.minecraft-services.net") || line.contains("InvalidJwtException")) {
+                                scope.launch(Dispatchers.Main) {
                                     onLog("Xbox authentication service unavailable.")
                                     onLog("Player authentication failed.")
                                 }
-                                if (line.contains("logged in with entity id") || line.contains("Player connected") || line.contains("Player authenticated:")) {
-                                    onLog("Xbox authentication state: VERIFIED")
-                                }
-                                if (line.contains("Enter a language code from the list below")) {
-                                    Log.i("ServerManager", "[JRE] First run detected")
-                                    onLog("[JRE] Applying default language: eng")
-                                    process?.outputStream?.write("eng\n".toByteArray())
-                                    process?.outputStream?.flush()
-                                }
-                                if (line.contains("You MUST accept this license to continue") || line.contains("Do you accept the license")) {
-                                    Log.i("ServerManager", "[JRE] Auto-accepting license")
-                                    onLog("[JRE] Auto-accepting license")
-                                    process?.outputStream?.write("yes\n".toByteArray())
-                                    process?.outputStream?.flush()
-                                }
+                            }
+                            if (line.contains("logged in with entity id") || line.contains("Player connected") || line.contains("Player authenticated:")) {
+                                scope.launch(Dispatchers.Main) { onLog("Xbox authentication state: VERIFIED") }
+                            }
+                            if (line.contains("Enter a language code from the list below")) {
+                                Log.i("ServerManager", "[JRE] First run detected")
+                                scope.launch(Dispatchers.Main) { onLog("[JRE] Applying default language: eng") }
+                                process?.outputStream?.write("eng\n".toByteArray())
+                                process?.outputStream?.flush()
+                            }
+                            if (line.contains("You MUST accept this license to continue") || line.contains("Do you accept the license")) {
+                                Log.i("ServerManager", "[JRE] Auto-accepting license")
+                                scope.launch(Dispatchers.Main) { onLog("[JRE] Auto-accepting license") }
+                                process?.outputStream?.write("yes\n".toByteArray())
+                                process?.outputStream?.flush()
                             }
                         }
                     } catch (e: Exception) {}
@@ -739,6 +621,9 @@ abstract class BaseJavaEngine(val context: Context, val onLog: (String) -> Unit,
     }
 
     override fun stopServer() {
+        val serviceIntent = android.content.Intent(context, com.example.server.ServerForegroundService::class.java)
+        serviceIntent.action = "STOP"
+        context.startService(serviceIntent)
         scope.launch(Dispatchers.IO) {
             withContext(Dispatchers.Main) { 
                 healthMonitor.setStatus(ServerStatus.STOPPING)
